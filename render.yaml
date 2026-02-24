@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: compass-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: GITHUB_TOKEN
+        sync: false          # manually set in Render dashboard
+      - key: AI_MODEL
+        value: gpt-4o
+      - key: AI_BASE_URL
+        value: https://models.inference.ai.azure.com
+      - key: DEBUG
+        value: "false"
+    healthCheckPath: /api/health
