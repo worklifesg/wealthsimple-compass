@@ -24,7 +24,7 @@ def _get_model_chain() -> list[str]:
     return [settings.ai_model] + settings.ai_fallback_models
 
 
-async def _call_with_fallback(*, messages: list[dict], use_json: bool = True) -> tuple[str, str]:
+async def _call_with_fallback(*, messages: list[dict], use_json: bool = True, temperature: float = 0.3) -> tuple[str, str]:
     """Call the AI API with automatic fallback on failure.
     
     Returns (response_content, model_used) tuple.
@@ -39,6 +39,7 @@ async def _call_with_fallback(*, messages: list[dict], use_json: bool = True) ->
             kwargs = dict(
                 model=model,
                 messages=messages,
+                temperature=temperature,
             )
             if use_json:
                 kwargs["response_format"] = {"type": "json_object"}
@@ -264,6 +265,7 @@ CONVERSATION RULES:
     content, _ = await _call_with_fallback(
         messages=api_messages,
         use_json=False,
+        temperature=0.6,
     )
 
     return content
