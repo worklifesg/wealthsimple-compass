@@ -1,10 +1,12 @@
-"""AI Planner — uses GitHub Models API (GPT-4o) to generate financial analysis, health scores, and recommendations."""
+"""AI Planner — uses GitHub Models API with automatic fallback across models."""
 
 from __future__ import annotations
-import json, re
+import json, re, logging
 from openai import AsyncOpenAI
 from models import FinancialProfile, DecisionItem
 from config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _get_client() -> AsyncOpenAI:
@@ -14,6 +16,47 @@ def _get_client() -> AsyncOpenAI:
         base_url=settings.ai_base_url,
         api_key=settings.github_token,
     )
+
+
+def _get_model_chain() -> list[str]:
+    """Return ordered list of models to try: primary + fallbacks."""
+    settings = get_settings()
+    return [settings.ai_model] + settings.ai_fallback_models
+
+
+async def _call_with_fallback(*, messages: list[dict], use_json: bool = True) -> tuple[str, str]:
+    """Call the AI API with automatic fallback on failure.
+    
+    Returns (response_content, model_used) tuple.
+    Tries each model in the chain. If all fail, raises the last exception.
+    """
+    client = _get_client()
+    models = _get_model_chain()
+    last_error = None
+
+    for model in models:
+        try:
+            kwargs = dict(
+                model=model,
+                messages=messages,
+            )
+            if use_json:
+                kwargs["response_format"] = {"type": "json_object"}
+            
+            logger.info(f"Calling model: {model}")
+            response = await client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+            
+            if model != models[0]:
+                logger.warning(f"Primary model failed, succeeded with fallback: {model}")
+            
+            return content, model
+        except Exception as e:
+            last_error = e
+            logger.error(f"Model {model} failed: {type(e).__name__}: {e}")
+            continue
+
+    raise last_error
 
 
 def _parse_json(text: str) -> dict:
@@ -96,15 +139,9 @@ OUTPUT FORMAT: Return valid JSON matching the exact schema requested. No markdow
 
 async def analyze_profile(profile: FinancialProfile) -> dict:
     """Generate comprehensive AI analysis of a financial profile."""
-    settings = get_settings()
-    client = _get_client()
-
     summary = _build_profile_summary(profile)
 
-    response = await client.chat.completions.create(
-        model=settings.ai_model,
-        temperature=0.3,
-        response_format={"type": "json_object"},
+    content, model_used = await _call_with_fallback(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_ANALYSIS},
             {"role": "user", "content": f"""{summary}
@@ -148,20 +185,16 @@ IMPORTANT: Return ONLY valid JSON — no markdown, no code fences, no extra text
         ],
     )
 
-    return _parse_json(response.choices[0].message.content)
+    result = _parse_json(content)
+    result["_model_used"] = model_used
+    return result
 
 
 async def generate_decisions(profile: FinancialProfile, analysis: dict) -> list[dict]:
     """Generate decision items that require human judgment."""
-    settings = get_settings()
-    client = _get_client()
-
     summary = _build_profile_summary(profile)
 
-    response = await client.chat.completions.create(
-        model=settings.ai_model,
-        temperature=0.3,
-        response_format={"type": "json_object"},
+    content, model_used = await _call_with_fallback(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_ANALYSIS},
             {"role": "user", "content": f"""{summary}
@@ -202,14 +235,11 @@ IMPORTANT: Return ONLY valid JSON — no markdown, no code fences, no extra text
         ],
     )
 
-    return _parse_json(response.choices[0].message.content)
+    return _parse_json(content)
 
 
 async def chat_with_context(profile: FinancialProfile, messages: list[dict]) -> str:
     """Financial planning chat with full profile context."""
-    settings = get_settings()
-    client = _get_client()
-
     summary = _build_profile_summary(profile)
 
     system_msg = f"""{SYSTEM_PROMPT_ANALYSIS}
@@ -231,27 +261,19 @@ CONVERSATION RULES:
     for m in messages:
         api_messages.append({"role": m["role"], "content": m["content"]})
 
-    response = await client.chat.completions.create(
-        model=settings.ai_model,
-        temperature=0.5,
-        max_tokens=1000,
+    content, _ = await _call_with_fallback(
         messages=api_messages,
+        use_json=False,
     )
 
-    return response.choices[0].message.content
+    return content
 
 
 async def compare_scenarios(profile: FinancialProfile, scenarios: list[dict], projections: dict) -> dict:
     """AI analysis comparing multiple financial scenarios."""
-    settings = get_settings()
-    client = _get_client()
-
     summary = _build_profile_summary(profile)
 
-    response = await client.chat.completions.create(
-        model=settings.ai_model,
-        temperature=0.3,
-        response_format={"type": "json_object"},
+    content, _ = await _call_with_fallback(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_ANALYSIS},
             {"role": "user", "content": f"""{summary}
@@ -287,4 +309,4 @@ IMPORTANT: Return ONLY valid JSON — no markdown, no code fences, no extra text
         ],
     )
 
-    return _parse_json(response.choices[0].message.content)
+    return _parse_json(content)

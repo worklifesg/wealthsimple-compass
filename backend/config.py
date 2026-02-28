@@ -6,7 +6,8 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     github_token: str = ""
-    ai_model: str = "gpt-5"
+    ai_model: str = "gpt-4.1"
+    ai_fallback_models: list[str] = ["gpt-4.1-mini", "gpt-4o-mini"]
     ai_base_url: str = "https://models.inference.ai.azure.com"
     app_title: str = "Compass — AI Financial Planner"
     cors_origins: list[str] = [
